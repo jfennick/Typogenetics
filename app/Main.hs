@@ -19,10 +19,10 @@ import TertiaryStructure
 import Utility
 
 main :: IO ()
-main = CM.forM_ [1..9] $ (\i -> do
+main = CM.forM_ [1..10] $ (\i -> do
          putStrLn $ "Search depth " ++ show i
          let checkfn diag = CM.zipWithM_ (CM.zipWithM_ checkLevelsForSuccess) (allStrands ()) diag
-         checkfn $ takeDiagonally i $ map (map DT.levels) $ typoGeneticsTreeAll ())
+         checkfn $ take i $ takeGenerations 4 $ map (map DT.levels) $ typoGeneticsTreeAll ())
 
 --Note the IO () type signature: This is the only impure function (besides main).
 checkLevelsForSuccess :: Strand -> [[Gen]] -> IO ()

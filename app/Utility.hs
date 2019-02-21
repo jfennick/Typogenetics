@@ -36,6 +36,9 @@ takeDiagonally :: Int -> [[[[a]]]] -> [[[[a]]]]
 --takeDiagonally n xs = take n $ map (map (\lsts -> takeDiagonally2 n lsts)) xs
 takeDiagonally n xs = zipWith (\j lst -> map (takeDiagonally2 j) lst) (reverse [1..n]) xs
 
+takeGenerations :: Int -> [[[[a]]]] -> [[[[a]]]]
+takeGenerations n xs = map (map (take n)) xs
+
 -- For reference, here is the source code for the two functions I used from the 'combinat' package.
 
 -- All possible ways to choose k elements from a list, without repetitions.
