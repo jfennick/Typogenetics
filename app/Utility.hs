@@ -1,13 +1,14 @@
 module Utility where
 
--- i.e. splitByPred (<4) [1,2,3,4,5,6,5,4,3,2,1,2,3,4,5,4,3] = [[4,5,6,5,4],[4,5,4],[]]
--- TODO: profiling indicates this function is allocating a significant % of the total memory.  Optimize.
+-- i.e. splitByPred (<4) [1,2,3,4,5,6,5,4,3,2,1,2,3,4,5,4,3] = [[4,5,6,5,4],[4,5,4]]
+data TD = Take | Drop
 splitByPred :: Eq a =>  (a -> Bool) -> [a] -> [[a]]
-splitByPred pred [] = []
-splitByPred pred xs = let (trueelems1, restelems1) = span pred xs
-                          (falseelems2, restelems2) = span (not . pred) restelems1
-                          result = if (falseelems2 == []) then falseelems2 else (init falseelems2) in
-                      falseelems2 : splitByPred pred restelems2
+splitByPred pred xs = go Take [] xs where
+  notp = not . pred
+  go Take acc []     = []
+  go Drop acc []     = [reverse acc]
+  go Take acc (x:xs) = if (pred x) then go Take (x:acc) xs else go Drop [] (x:xs)
+  go Drop acc (x:xs) = if (notp x) then go Drop (x:acc) xs else [reverse acc] ++ go Take [] (x:xs)
 
 listToPairs :: [a] -> [(a,a)]
 listToPairs [] = []

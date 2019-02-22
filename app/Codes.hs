@@ -12,7 +12,7 @@ cut (DS (l1,x:[]) (l2,y:[])) = (DS (l1,x:[]) (l2,y:[]), Stop) --if already at ri
 -- Implement cutting by inserting double Nothings, and then actually cut later in cutDS.
 -- This allows all 15 Codes to have a uniform return type which makes it possible
 -- to define transcribe using foldl.
-cut (DS (l1,x:r1) (l2,y:r2)) = ((DS (l1,x:Nothing:r1) (l2,y:Nothing:r2)), Stop)
+cut (DS (l1,x:r1) (l2,y:r2)) = ((DS (x:l1,Nothing:r1) (y:l2,Nothing:r2)), Stop)
 
 -- NOTE: Rather than simply delete and move right, we want to detect if deleting will
 -- cause the strand to become effectively cut (and thus Stop). Need to look at 3 adjacent bases.
@@ -33,7 +33,7 @@ del (DS ([],x:x2:r1) ([], y:y2:r2)) = (DS ([Nothing],x2:r1) ([y],y2:r2), Continu
 del (DS (x1:l1,x:x2:r1) (y1:l2,y:y2:r2)) = calcresult x1 l1 x x2 r1 y1 l2 y y2 r2 where
   calcresult x1 l1 x x2 r1 y1 l2 y y2 r2
     | (not(y==Nothing) && (y1==Nothing || y2==Nothing)) = -- L diagrams
-      (DS (x1:l1,Nothing:Nothing:x2:r1) (y1:l2,y:Nothing:y2:r2), Stop) -- diagonal=CUT, skip move right
+      (DS (Nothing:x1:l1,Nothing:x2:r1) (y:y1:l2,Nothing:y2:r2), Stop) -- diagonal=CUT
 -- Insert double Nothings after x and y and cut later
     | (not (y==Nothing)) && (x2==Nothing) =               -- T diagram
       (DS (x1:l1,Nothing:x2:r1) (y1:l2,y:y2:r2), Stop) -- next pos Nothing, skip move right
@@ -85,7 +85,7 @@ switch (DS (l1,x:r1) (l2,y:r2)) = (DS (r2,y:l2) (r1,x:l1), Continue)
 -- i.e. (moveLeft $ DS (y:r2,l2) (x:r1,l1), Continue) because when r1 & r2 == []
 -- the intermediate state is illegal.
 
-insert :: MBP -> DS -> (DS, SC) --(DS (l1,[maybebase]) (l2,[Nothing]), Continue)
+insert :: MBP -> DS -> (DS, SC)
 insert maybebase (DS (l1,[]) (l2,[])) = error "already at right end insert"
 insert maybebase (DS (l1,x:r1) (l2,y:r2)) = (DS (x:l1,maybebase:r1) (y:l2,Nothing:r2), Continue)
 

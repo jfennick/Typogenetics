@@ -82,16 +82,16 @@ transcribe strand codes = results where
   initialpositions = map (moveToBindingSite ds) indices
   shortcircuitfn (mode, (ds, sc)) code =
     if (sc == Stop) then (mode, (ds, sc)) else transcribeCode (mode, (ds, sc)) code
-  results = map (\pos -> fst $ snd $ foldl shortcircuitfn (Off, (pos, Continue)) codes)
+  results = map (\pos -> fst $ snd $ DL.foldl' shortcircuitfn (Off, (pos, Continue)) codes)
                 initialpositions
 
 -- transcribes strand starting at each binding site of the enzyme represented by codes on strand
 -- each element of list is from a different binding site, but each binding site may yield a list of strands
 transcribeAllSites :: Strand -> [Code] -> [[Strand]]
-transcribeAllSites strand codes = map (cutDS . unzipDS) $ transcribe strand codes
+transcribeAllSites strand codes = map unzipCutDS $ transcribe strand codes
 
-transcribeSet :: Strand -> [Code] -> DS.Set Strand
-transcribeSet strand codes = DS.fromList $ concat $ map (cutDS . unzipDS) $ transcribe strand codes
+transcribeAllSitesSet :: Strand -> [Code] -> DS.Set Strand
+transcribeAllSitesSet strand codes = DS.fromList $ concat $ transcribeAllSites strand codes
 
 isAA :: (BasePair, BasePair) -> Bool
 isAA (A, A) = True
@@ -99,37 +99,30 @@ isAA (_, _) = False
 
 translate :: Strand -> [[Code]]
 translate strand = result where --Split a strand into genes when AA
-  listlistpairs = filter (not . (== [])) $ splitByPred isAA $ listToPairs strand
+  listlistpairs = splitByPred isAA $ listToPairs strand
   codefn listofpairs = map (fst . getCode) listofpairs
   result = map codefn listlistpairs
 
--- For nontermination heuristics
--- In evolve, we only want to transcribe some strand with a *single* gene from another strand. To help,
--- this function flattens the codes from all genes in a set of strands into a single set.
--- It is also used for nontermination heuristics
-translateAllGenes :: DS.Set Strand -> DS.Set [Code]
-translateAllGenes strands = DS.fromList $ concat $ map translate $ DS.toList strands
-
-translateAll :: DS.Set Strand -> DS.Set Code
-translateAll strands = DS.fromList $ concat $ map (concat . translate) $ DS.toList strands
-
 unzipDS :: DS -> ([MBP],[MBP])
 unzipDS ds = (r1,r2) where
-  moveFarLeft :: (DS, Bool) -> (DS, Bool) -- like moveLeft, but ignores Nothing
-  moveFarLeft ((DS ([],r1) ([],r2)),_) = (DS ([],r1) ([],r2), False) -- if already at left end, do nothing
-  moveFarLeft ((DS (x:l1,r1) (y:l2,r2)), _) = (DS (l1, x:r1) (l2,y:r2), True)
-  (DS (_,r1) (_,r2), _) = last $ takeWhileInclusive snd $ iterate moveFarLeft (ds, True)
+  moveFarLeft :: DS -> DS -- like moveLeft, but ignores Nothing
+  moveFarLeft (DS ([],r1) ([],r2))     = DS ([],r1) ([],r2) -- if already at left end, do nothing
+  moveFarLeft (DS (x:l1,r1) (y:l2,r2)) = moveFarLeft $ DS (l1, x:r1) (l2,y:r2)
+  DS (_,r1) (_,r2) = moveFarLeft ds
 
 -- This function actually performs the cutting (which we deferred in the cut function).
+-- cut (and del, when cutting) now return a DS with double Nothing's in the current position
+-- (head of right lists). Thus, we don't need to moveFarLeft and then look for double Nothing's.
 cutDS :: ([MBP],[MBP]) -> [Strand]
 cutDS (bot,top) = result where
-  listlistpairs :: [[(MBP, MBP)]]
-  listlistpairs = filter (not . (== [])) $ splitByPred (== (Nothing,Nothing)) $ zip bot top
-  revtop (bot,top) = [bot, reverse top]
-  maybes :: [[MBP]]
-  maybes = concat $ map revtop $ map unzip listlistpairs
-  removeN strand = map DM.fromJust $ filter (not . (== Nothing)) strand
-  result = filter (not . (== [])) $ map removeN maybes -- filter (not . (== [])) necessary?
+--Each [MBP] may contain alternating Nothing's and Just's, i.e. use splitByPred, not filter!
+  splitN strand = map (map DM.fromJust) $ splitByPred (== Nothing) strand
+  result = concat $ map splitN [bot, reverse top]
+
+unzipCutDS :: DS -> [Strand]
+unzipCutDS (DS (l1,[]) (l2,[])) = cutDS (reverse l1, reverse l2)
+unzipCutDS (DS (l1,Nothing:r1) (l2,Nothing:r2)) = cutDS (reverse l1, reverse l2) ++ cutDS (r1,r2)
+unzipCutDS ds = cutDS $ unzipDS ds
 
 --Need at least 3 choices here because if not KeepGoing, we need to know whether Success or not
 data GSC = Fail | KeepGoing | Success | NonTerm deriving (Eq, Read, Show)
@@ -144,7 +137,7 @@ evolveList origstrand ((strands, sc), prevgens) =
 -- Note: Taking unions in gen12 loses binding site info!  This can cause some of the nontermination
 -- heuristics to fail. (i.e. on input [A,G,A])  Also, if strand2 codes for more than one gene,
 -- we are incorrectly transcribing strand1 by more than one gene. evolveTree solves both of these issues.
-  gens = [let gen12 = DS.unions [transcribeSet strand1 code | code <- translate strand2]
+  gens = [let gen12 = DS.unions [transcribeAllSitesSet strand1 code | code <- translate strand2]
 -- check done here (rather than after taking unions in result) because otherwise, if origstrand
 -- is in strands, it would be impossible to determine if a new copy is made
               done = if (not (strand1 == origstrand) && DS.member origstrand gen12)
@@ -152,7 +145,7 @@ evolveList origstrand ((strands, sc), prevgens) =
           in (gen12, done)
          | strand1 <- DS.toList strands, strand2 <- DS.toList strands]
   newstrands = DS.unions $ map fst gens
-  allcodes = translateAll newstrands
+  allcodes = DS.fromList $ concat $ map (concat . translate) $ DS.toList strands
 --nonterm via size and codes, i.e. each str in newstrands >= origstrand and insert but no delete or cut
   sizenonterm = (DS.filter (\str-> length str <= length origstrand) newstrands == DS.empty)
                 && (any (\icode -> DS.member icode allcodes) [InsertA, InsertT, InsertG, InsertC])
@@ -179,11 +172,13 @@ evolveTree :: Strand -> Gen -> (Gen, [Gen])
 evolveTree origstrand ((strands, sc), prevgens) =
 {- The following code is a bit tricky.  We want to perform all possible transcriptions without losing any
 information. Simply flattening the lists (as in evolveList) loses information, so we use CT.tuples'
-to get indices to the data we want before flattening at the end. Note that the use of bindings here is
-likely causing a space leak (allcombos and allgens in particular).-}
+to get indices to the data we want before flattening at the end.-}
   let
+-- We only want to transcribe some strand with a *single* gene from another strand.
+-- allcodesthisgen flattens the codes from all genes in a set of strands into a single set.
+-- It is also used for nontermination heuristics
   allcodesthisgen :: DS.Set Strand -> DS.Set [Code]
-  allcodesthisgen strands = translateAllGenes strands
+  allcodesthisgen strands = DS.fromList $ concat $ map translate $ DS.toList strands
   
   codecombos :: DS.Set [Code] -> [[[Code]]] --each listofenzymes in codecombos is of length (length strands)
   codecombos allcodesthisgen = CS.choose (length strands) $ DS.toList allcodesthisgen
@@ -265,6 +260,6 @@ pg506TertStructs = map getTertiaryStructure pg506Codes
 pg506BindingLetters = map (getBindingLetter . last) pg506TertStructs
 --[FindPyRight, CopyOn, FindPuRight, Cut]
 
-pg506example = transcribeSet pg506Strand [FindPyRight, CopyOn, FindPuRight, Cut]
-pg508example = transcribeSet pg508Strand [FindPuRight, InsertC, CopyOn, MoveRight, MoveLeft, Switch, FindPuLeft, InsertT]
+pg506example = transcribeAllSitesSet pg506Strand [FindPyRight, CopyOn, FindPuRight, Cut]
+pg508example = transcribeAllSitesSet pg508Strand [FindPuRight, InsertC, CopyOn, MoveRight, MoveLeft, Switch, FindPuLeft, InsertT]
 -- getBindingLetter $ last $ getTertiaryStructure [FindPuRight, InsertC, CopyOn, MoveRight, MoveLeft, Switch, FindPuLeft, InsertT] = T, but the claim on pg 509 is that it is G...?  Errata?
