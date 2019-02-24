@@ -133,9 +133,10 @@ type Gen = ((DS.Set Strand, GSC),  -- Current generation and shortcircuit
 -- This function has been superceded by evolveTree.  See comments below.
 evolveList :: Strand -> Gen -> Gen
 evolveList origstrand ((strands, sc), prevgens) =
-  if (strands == DS.empty) then ((strands, Fail), prevgens) else (result, newgens) where
--- Note: Taking unions in gen12 loses binding site info!  This can cause some of the nontermination
--- heuristics to fail. (i.e. on input [A,G,A])  Also, if strand2 codes for more than one gene,
+  if (strands == DS.empty) then ((strands, Fail), prevgens)
+     else if (not (sc == KeepGoing)) then ((strands, sc), prevgens)
+     else (result, newgens) where
+-- Note: Taking unions in gen12 loses binding site info! Also, if strand2 codes for more than one gene,
 -- we are incorrectly transcribing strand1 by more than one gene. evolveTree solves both of these issues.
   gens = [let gen12 = DS.unions [transcribeAllSitesSet strand1 code | code <- translate strand2]
 -- check done here (rather than after taking unions in result) because otherwise, if origstrand
@@ -146,18 +147,13 @@ evolveList origstrand ((strands, sc), prevgens) =
          | strand1 <- DS.toList strands, strand2 <- DS.toList strands]
   newstrands = DS.unions $ map fst gens
   allcodes = DS.fromList $ concat $ map (concat . translate) $ DS.toList strands
---nonterm via size and codes, i.e. each str in newstrands >= origstrand and insert but no delete or cut
-  sizenonterm = (DS.filter (\str-> length str <= length origstrand) newstrands == DS.empty)
-                && (any (\icode -> DS.member icode allcodes) [InsertA, InsertT, InsertG, InsertC])
-                && (DS.notMember Delete allcodes) && (DS.notMember Cut allcodes)
   newgens = DS.insert newstrands prevgens
   result = (newstrands, if (any (== Success) $ map snd gens)
-                        then Success else --try some heuristics to detect nontermination
-                          if ((newstrands == strands)-- via idempotency with immediate predecessor.
-                             || (DS.member newstrands prevgens)
+                        then Success else
+-- Since our evolution function is deterministic, if we ever produce a previous generation then NonTerm
 -- We can check for nontermination cycles of arbitrarily large finite length by simply testing for membership
 -- This will require much more memory, but will eliminate a large class of nontermination.
-                             || sizenonterm)
+                          if ((newstrands == strands) || (DS.member newstrands prevgens))
                           then NonTerm else KeepGoing)
 
 typoGeneticsList :: Strand -> [(DS.Set Strand, GSC)]
@@ -206,26 +202,20 @@ to get indices to the data we want before flattening at the end.-}
   donefn :: [Strand] -> Gen
   donefn gen =  let madecopy = (>1) $ length $ filter (==origstrand) gen
                     genset = DS.fromList gen
-                    done = if madecopy then Success
-                           else --try some heuristics to detect nontermination
-                             if ((genset == strands)-- via idempotency with immediate predecessor.
-                                || (DS.member genset prevgens)
+                    done = if madecopy then Success else
+-- Since our evolution function is deterministic, if we ever produce a previous generation then NonTerm
 -- We can check for nontermination cycles of arbitrarily large finite length by simply testing for membership
 -- This will require much more memory, but will eliminate a large class of nontermination.
-                                || sizenonterm)
+                             if ((genset == strands) || (DS.member genset prevgens))
                              then NonTerm else KeepGoing
                     allgenes = DS.fromList $ concat $ concat $ map translate $ DS.toList strands
                     allgenesnextgen = DS.fromList $ concat $ concat $ map translate gen
- --nonterm via size and codes, i.e. each str in newstrands >= origstrand and insert but no delete or cut
-                    sizenonterm = (DS.filter (\str-> length str <= length origstrand) genset == DS.empty)
-                      && (any (\icode -> DS.member icode allgenesnextgen) [InsertA, InsertT, InsertG, InsertC])
-                      && (DS.notMember Delete allgenes) && (DS.notMember Cut allgenes)
                     newgens = DS.insert genset prevgens
                 in ((genset, done), newgens)
---Only flatten at the very end
-  in if (strands == DS.empty || sc == Fail)
-       then (((strands, Fail), prevgens), [])
+    in if (strands == DS.empty) then (((strands, Fail), prevgens), [])
+       else if (not (sc == KeepGoing)) then (((strands, sc), prevgens), [])
        else (((strands, sc), prevgens),
+-- Only flatten at the very end, i.e. only flatten after applying donefn to each gensite
     [donefn gensite | genenz <- allgens (allindices $ allcombos' strands) (allcombos' strands)
                            , gensite <- genenz]) --allcombos' evaluated twice, but no space leak
 
